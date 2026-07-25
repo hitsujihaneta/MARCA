@@ -241,6 +241,17 @@ class FileIOMixin:
     def _last_session_pointer_path(self) -> str:
         return os.path.join(self._repo_root(), ".marca_last_session.json")
 
+    def _clear_last_session_pointer(self):
+        """正常に終了する際に呼ぶ。次回起動時に「予期せぬ終了」と誤検出されないよう、
+        セッションポインタを消しておく（保存の有無に関わらず、正規の終了経路を
+        通った時点でクラッシュではないと分かるため）。"""
+        path = self._last_session_pointer_path()
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+
     def _save_last_session_pointer(self):
         """現在の画像フォルダ・読み込み元を、固定の場所に記録しておく。
         クラッシュ等で正常終了できなかった場合でも、次回起動時に「どのフォルダで

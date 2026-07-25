@@ -268,6 +268,8 @@ class DetectionEditor(UIBuilderMixin, FileIOMixin, CoreLogicMixin, QtWidgets.QWi
                 self.show_save_dialog()
 
         event.accept()
+        # 正規の終了経路を通ったので、次回起動時に「予期せぬ終了」と誤検出されないようにする
+        self._clear_last_session_pointer()
         # ウィンドウを閉じたら、起動元のターミナル/コンソールも閉じる
         self._close_host_terminal()
 
@@ -357,4 +359,28 @@ if __name__ == '__main__':
     app.setFont(base_font)
 
     editor = DetectionEditor()
+
+    # ターミナル窓を閉じる/Ctrl+C等（SIGINT/SIGTERM/SIGHUP）で終了された場合も、
+    # closeEvent を通した正規の終了経路として扱い、「予期せぬ終了」の誤検出を防ぐ。
+    # Qtのイベントループは素のシグナル処理を遅延させるため、定期的にPython側へ
+    # 制御を戻す空タイマーを併用する（Windowsではconsole windowのXボタン閉じは
+    # 別経路のため検知できないが、Ctrl+C等はここでカバーできる）。
+    import signal
+
+    def _handle_termination_signal(signum, frame):
+        editor.close()
+        app.quit()
+
+    for _sig_name in ("SIGINT", "SIGTERM", "SIGHUP"):
+        _sig = getattr(signal, _sig_name, None)
+        if _sig is not None:
+            try:
+                signal.signal(_sig, _handle_termination_signal)
+            except Exception:
+                pass
+
+    _signal_wakeup_timer = QtCore.QTimer()
+    _signal_wakeup_timer.timeout.connect(lambda: None)
+    _signal_wakeup_timer.start(500)
+
     app.exec_()
