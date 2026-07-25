@@ -625,6 +625,28 @@ class CoreLogicMixin:
         """追跡ズーム中の再生/停止（Phase1 の再生に委譲）"""
         self.toggle_play_pause()
 
+    def _phase4_get_tracked_id(self) -> Optional[str]:
+        """検出フェーズの「ID追跡」で現在選択中のIDを返す（ID追跡OFF時はNone）。
+        追跡フェーズへ切り替える際、この値を引き継ぐために使う。"""
+        if not getattr(self, 'phase4_active', False):
+            return None
+        if hasattr(self, 'phase4_id_combo') and self.phase4_id_combo.count() > 0:
+            return self.phase4_id_combo.currentText() or None
+        return self.current_id or None
+
+    def _phase4_set_tracked_id(self, id_value: Optional[str], enable: bool):
+        """追跡フェーズ側の「ID追跡」状態を検出フェーズに引き継ぐ。
+        id_valueが現在のid_listに存在しない場合は何もしない。"""
+        if not enable or not id_value or id_value not in self.id_list:
+            return
+        if not getattr(self, 'phase4_active', False) and hasattr(self, 'phase4_toggle'):
+            self.phase4_toggle.setChecked(True)  # toggledシグナルで_on_phase4_toggledが呼ばれる
+        if hasattr(self, 'phase4_id_combo'):
+            idx = self.phase4_id_combo.findText(id_value)
+            if idx >= 0:
+                self.phase4_id_combo.setCurrentIndex(idx)
+        self._phase4_apply_zoom()
+
     def _phase4_play_next_frame(self):
         """Phase4再生中の次フレーム処理"""
         if self.current_frame_index < len(self.image_paths) - 1:
@@ -701,6 +723,8 @@ class CoreLogicMixin:
         self._ensure_color_map()
 
         # Phase3移行前にID追跡の状態を保存し、一時的に無効化
+        # （引き継ぎ先で使うため、無効化する前に追跡中のIDを控えておく）
+        phase1_tracked_id = self._phase4_get_tracked_id()
         self._phase4_was_active = getattr(self, 'phase4_active', False)
         if getattr(self, 'phase4_active', False):
             self._phase4_on_deactivate()
@@ -726,6 +750,9 @@ class CoreLogicMixin:
             if orig and self.store.shared_frame in orig:
                 idx = orig.index(self.store.shared_frame)
                 self.phase3_widget._seek(idx)
+            # 検出フェーズでID追跡中だったIDを、追跡フェーズにも引き継ぐ
+            if phase1_tracked_id:
+                self.phase3_widget.set_tracked_id(phase1_tracked_id, enable=True)
 
     def _preload_all_annotations(self):
         """全フレームのアノテーション（JSON）を遅延読み込みで一括取得する。
@@ -735,9 +762,13 @@ class CoreLogicMixin:
 
     def _deactivate_phase3(self):
         """Phase3全画面を閉じて通常レイアウトに戻す"""
+        # 引き継ぎ用に、追跡フェーズ側でID追跡中だったIDを控えておく
+        # （on_phase_deactivate()より前に読む必要はないが、分かりやすさのためここで取得）
+        p3_tracked_id = None
         if _PHASE3_AVAILABLE and hasattr(self, 'phase3_widget'):
             # Phase3の現在フレーム（原フレーム番号）を共有フレームとして保存
             p3 = self.phase3_widget
+            p3_tracked_id = p3.get_tracked_id()
             orig = p3.original_frame_numbers
             if orig and p3.current_frame < len(orig):
                 self.store.shared_frame = orig[p3.current_frame]
@@ -756,11 +787,14 @@ class CoreLogicMixin:
                     break
         self.load_image()
         self.rebuild_id_list_ui()
-        # Phase3移行前にONだったID追跡チェックを復元
-        if getattr(self, '_phase4_was_active', False):
-            self._phase4_was_active = False
-            if hasattr(self, 'phase4_toggle'):
-                self.phase4_toggle.setChecked(True)  # toggled シグナルで _on_phase4_toggled が呼ばれる
+        # ID追跡の状態を引き継ぐ：追跡フェーズ側で選択されていたIDがあればそれを優先し、
+        # 無ければPhase3移行前の検出フェーズのID追跡状態を復元する
+        was_active = getattr(self, '_phase4_was_active', False)
+        self._phase4_was_active = False
+        if p3_tracked_id:
+            self._phase4_set_tracked_id(p3_tracked_id, enable=True)
+        elif was_active and hasattr(self, 'phase4_toggle'):
+            self.phase4_toggle.setChecked(True)  # toggled シグナルで _on_phase4_toggled が呼ばれる
 
     def _on_phase_tab_changed(self, new_idx: int):
         """タブ切り替え時の処理"""
@@ -1119,7 +1153,13 @@ class CoreLogicMixin:
         self.hover_item = None
         self.hover_box_index = None
         self.drag_rect = None # ★修正2: ドラッグ中の矩形アイテムもリセット
-        
+        # 再生中のfast-path（_load_image_fast）が使うキャッシュ済みアイテム参照も
+        # scene.clear()で削除済みになるため、ここでリセットしておかないと次の再生
+        # ティックで削除済みC++オブジェクトにアクセスしてクラッシュする
+        # （例: 再生中にIDを選択してload_image()の通常描画が割り込むケース）
+        self._play_pixmap_item = None
+        self._bbox_items = []
+
         self.scene.addPixmap(pixmap)
         self.scene.setSceneRect(0, 0, pixmap.width(), pixmap.height())
 

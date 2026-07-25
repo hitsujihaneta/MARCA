@@ -1163,6 +1163,30 @@ class Phase3Widget(QWidget):
                 break
         combo.blockSignals(False)
 
+    def get_tracked_id(self) -> Optional[str]:
+        """現在ID追跡中のIDを返す（ID追跡OFF時はNone）。
+        検出フェーズへ切り替える際、この値を引き継ぐために使う。"""
+        if not self._id_tracking:
+            return None
+        lane_idx = self.ctrl.idTrackCombo.currentData()
+        if lane_idx is None or not (0 <= lane_idx < len(self._lanes_all)):
+            return None
+        return self._lanes_all[lane_idx].id_value
+
+    def set_tracked_id(self, id_value: Optional[str], enable: bool):
+        """検出フェーズ側の「ID追跡」状態を引き継いでコンボボックスに反映する。
+        id_valueが現在のレーンに存在しない場合は何もしない。"""
+        if not enable or not id_value:
+            return
+        combo = self.ctrl.idTrackCombo
+        for j in range(combo.count()):
+            lane_idx = combo.itemData(j)
+            if 0 <= lane_idx < len(self._lanes_all) and self._lanes_all[lane_idx].id_value == id_value:
+                combo.setCurrentIndex(j)
+                self.ctrl.chkIdTrack.setChecked(True)  # toggledシグナルで_on_id_track_toggledが呼ばれる
+                self._center_on_tracked_id()
+                return
+
     def _step(self, delta: int):
         self._seek(self.current_frame + delta)
 
