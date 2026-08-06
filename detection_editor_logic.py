@@ -725,7 +725,6 @@ class CoreLogicMixin:
         # Phase3移行前にID追跡の状態を保存し、一時的に無効化
         # （引き継ぎ先で使うため、無効化する前に追跡中のIDを控えておく）
         phase1_tracked_id = self._phase4_get_tracked_id()
-        self._phase4_was_active = getattr(self, 'phase4_active', False)
         if getattr(self, 'phase4_active', False):
             self._phase4_on_deactivate()
             self.phase4_active = False
@@ -750,9 +749,8 @@ class CoreLogicMixin:
             if orig and self.store.shared_frame in orig:
                 idx = orig.index(self.store.shared_frame)
                 self.phase3_widget._seek(idx)
-            # 検出フェーズでID追跡中だったIDを、追跡フェーズにも引き継ぐ
-            if phase1_tracked_id:
-                self.phase3_widget.set_tracked_id(phase1_tracked_id, enable=True)
+            # 検出フェーズのID追跡状態（ON/OFFとも）を、そのまま追跡フェーズへ引き継ぐ
+            self.phase3_widget.set_tracked_id(phase1_tracked_id, enable=bool(phase1_tracked_id))
 
     def _preload_all_annotations(self):
         """全フレームのアノテーション（JSON）を遅延読み込みで一括取得する。
@@ -787,14 +785,22 @@ class CoreLogicMixin:
                     break
         self.load_image()
         self.rebuild_id_list_ui()
-        # ID追跡の状態を引き継ぐ：追跡フェーズ側で選択されていたIDがあればそれを優先し、
-        # 無ければPhase3移行前の検出フェーズのID追跡状態を復元する
-        was_active = getattr(self, '_phase4_was_active', False)
-        self._phase4_was_active = False
+        # 追跡フェーズで再生速度が変わっていた場合に備え、検出フェーズのコンボにも反映する
+        if hasattr(self, 'speed_combo'):
+            for i in range(self.speed_combo.count()):
+                text = self.speed_combo.itemText(i)
+                try:
+                    val = float(text.replace('x', ''))
+                except ValueError:
+                    continue
+                if val == self.playback_speed:
+                    self.speed_combo.setCurrentText(text)
+                    break
+        # 追跡フェーズのID追跡状態（ON/OFFとも）を、そのまま検出フェーズへ引き継ぐ
         if p3_tracked_id:
             self._phase4_set_tracked_id(p3_tracked_id, enable=True)
-        elif was_active and hasattr(self, 'phase4_toggle'):
-            self.phase4_toggle.setChecked(True)  # toggled シグナルで _on_phase4_toggled が呼ばれる
+        elif hasattr(self, 'phase4_toggle'):
+            self.phase4_toggle.setChecked(False)  # toggled シグナルで _on_phase4_toggled が呼ばれる
 
     def _on_phase_tab_changed(self, new_idx: int):
         """タブ切り替え時の処理"""
@@ -1377,21 +1383,27 @@ class CoreLogicMixin:
         """マウスイベントをフィルタリング"""
 
         # Phase3 のジャンプ入力欄でEnterキーを押したらジャンプ実行
+        # （sourceではなく実際にフォーカスを持つウィジェットで判定する。sourceは必ずしも
+        #  フォーカス中のウィジェットと一致するとは限らず、一致しない場合ここが素通りして
+        #  下の「テキスト入力以外を転送」ブロックに誤って拾われてしまうため）
+        focus_widget = QtWidgets.QApplication.focusWidget()
         if (event.type() == QtCore.QEvent.KeyPress
                 and self.current_phase == 3
                 and event.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter)
-                and isinstance(source, QtWidgets.QLineEdit)
                 and hasattr(self, 'phase3_widget')
                 and hasattr(self.phase3_widget, 'ctrl')
-                and source is self.phase3_widget.ctrl.jumpEdit):
+                and focus_widget is self.phase3_widget.ctrl.jumpEdit):
             self.phase3_widget._on_jump()
             return True
 
         # Phase3 表示中：テキスト入力以外のキーイベントを DetectionEditor に転送
+        # （実際にフォーカスしているウィジェットがテキスト入力系なら、半角数字の直接入力等が
+        #  ここで奪われないよう転送しない。IME確定によるフルワイド入力はKeyPressを経由しない
+        #  ため元々影響を受けないが、半角の直接キー入力はここで飲まれると欄に何も入らなくなる）
         if (event.type() == QtCore.QEvent.KeyPress
                 and self.current_phase == 3
                 and source is not self
-                and not isinstance(source, (QtWidgets.QLineEdit, QtWidgets.QAbstractSpinBox))
+                and not isinstance(focus_widget, (QtWidgets.QLineEdit, QtWidgets.QAbstractSpinBox))
                 and QtWidgets.QApplication.activeWindow() is self):
             self.keyPressEvent(event)
             return True

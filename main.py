@@ -73,6 +73,14 @@ class DetectionEditor(UIBuilderMixin, FileIOMixin, CoreLogicMixin, QtWidgets.QWi
     def hidden_ids(self, val: set):
         self.store.hidden_ids = val
 
+    @property
+    def playback_speed(self) -> float:
+        return self.store.playback_speed
+
+    @playback_speed.setter
+    def playback_speed(self, val: float):
+        self.store.playback_speed = val
+
     def __init__(self):
         super().__init__()
         # ストアを最初に生成（プロパティアクセスより前に必要）

@@ -973,6 +973,12 @@ class Phase3Widget(QWidget):
         # detections を Box に変換
         self._convert_detections_to_boxes(detections, id_list)
 
+        # 再生速度を検出フェーズと共有（フェーズ切り替え時に最新値を反映）
+        for _text, _factor in _P3_SPEED_FACTORS.items():
+            if _factor == self.store.playback_speed:
+                self.ctrl.speedCombo.setCurrentText(_text)
+                break
+
         # 表示更新
         self._refresh_views()
         self._clear_undo()
@@ -1175,8 +1181,10 @@ class Phase3Widget(QWidget):
 
     def set_tracked_id(self, id_value: Optional[str], enable: bool):
         """検出フェーズ側の「ID追跡」状態を引き継いでコンボボックスに反映する。
-        id_valueが現在のレーンに存在しない場合は何もしない。"""
+        enable=FalseまたはID未指定の場合はOFFにする（検出フェーズ側でOFFにした状態も
+        きちんと引き継ぐため）。id_valueが現在のレーンに存在しない場合はOFFにする。"""
         if not enable or not id_value:
+            self.ctrl.chkIdTrack.setChecked(False)  # toggledシグナルで_on_id_track_toggledが呼ばれる
             return
         combo = self.ctrl.idTrackCombo
         for j in range(combo.count()):
@@ -1186,6 +1194,7 @@ class Phase3Widget(QWidget):
                 self.ctrl.chkIdTrack.setChecked(True)  # toggledシグナルで_on_id_track_toggledが呼ばれる
                 self._center_on_tracked_id()
                 return
+        self.ctrl.chkIdTrack.setChecked(False)
 
     def _step(self, delta: int):
         self._seek(self.current_frame + delta)
@@ -1244,7 +1253,10 @@ class Phase3Widget(QWidget):
             self.timer.start(self._get_timer_interval())
             self.ctrl.btnPlay.setText("❚❚")
 
-    def _on_speed_changed(self, _text: str):
+    def _on_speed_changed(self, text: str):
+        # 検出フェーズと再生速度を共有する
+        if text in _P3_SPEED_FACTORS:
+            self.store.playback_speed = _P3_SPEED_FACTORS[text]
         if self.timer.isActive():
             self.timer.setInterval(self._get_timer_interval())
 
