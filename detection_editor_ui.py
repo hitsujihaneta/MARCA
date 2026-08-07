@@ -734,17 +734,37 @@ class UIBuilderMixin:
         if not hasattr(self, 'id_scroll_layout'):
             return # loaded_ui がまだ構築されていない場合はスキップ
 
-        while self.id_scroll_layout.count():
-            item = self.id_scroll_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
-
         total_frames = len(self.image_paths)
 
         self._ensure_color_map()
 
         sorted_ids = self.id_list  # 既に自然順で並んでいる
+
+        # 表示内容が前回と変わっていなければ、行ウィジェットの全再構築はスキップする。
+        # フレーム移動だけでは表示内容（ID一覧・表示状態・進捗）は変わらないのに、
+        # 毎回全行を作り直すのは重いため（22ID時で実測20ms超）。
+        progress_map = {id_: self._progress_for_id(id_) for id_ in sorted_ids}
+        signature = (
+            tuple(sorted_ids),
+            frozenset(self.hidden_ids),
+            bool(getattr(self, 'copy_mode', False)),
+            frozenset(getattr(self, 'copy_target_ids', None) or ()),
+            tuple(progress_map[id_] for id_ in sorted_ids),
+            self.current_id,
+            total_frames,
+        )
+        if (self.id_scroll_layout.count() > 0
+                and getattr(self, '_id_list_ui_signature', None) == signature):
+            self._refresh_phase4_id_combo()
+            self._refresh_filter_combo()
+            return
+        self._id_list_ui_signature = signature
+
+        while self.id_scroll_layout.count():
+            item = self.id_scroll_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
 
         fm_global = self.fontMetrics()
         widest_text = ""
@@ -788,7 +808,7 @@ class UIBuilderMixin:
             h.addWidget(vis_btn, 0, QtCore.Qt.AlignVCenter)
 
             # 進捗ラベル（フレーム数の桁数に合わせた幅）
-            done, denom = self._progress_for_id(id_)
+            done, denom = progress_map[id_]
             denom_val = denom if denom > 0 else total_frames
             status = f"{done}/{denom_val}"
             prog = QtWidgets.QLabel(status)
