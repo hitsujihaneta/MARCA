@@ -803,7 +803,9 @@ class FileIOMixin:
         if not is_folder:
             # 単一ファイルを選択（一括保存形式、またはファイル名にフレーム番号がないフレームごとの形式）
             path, _ = QtWidgets.QFileDialog.getOpenFileName(
-                self, "検出結果ファイルを選択", filter="Text files (*.txt *.csv);;All files (*)"
+                self, "検出結果ファイルを選択",
+                self.last_txt_import_folder or self.image_folder or "",
+                filter="Text files (*.txt *.csv);;All files (*)"
             )
             if not path:
                 return
@@ -812,7 +814,7 @@ class FileIOMixin:
         else:
             # フォルダを選択（フレームごとのファイル形式を想定）
             folder = QtWidgets.QFileDialog.getExistingDirectory(
-                self, "検出結果フォルダを選択"
+                self, "検出結果フォルダを選択", self.last_txt_import_folder or self.image_folder or ""
             )
             if not folder:
                 return
@@ -823,7 +825,7 @@ class FileIOMixin:
 
     # -------- 画像読み込み --------
     def load_images(self):
-        folder = QtWidgets.QFileDialog.getExistingDirectory(self, "画像フォルダを選択")
+        folder = QtWidgets.QFileDialog.getExistingDirectory(self, "画像フォルダを選択", self.image_folder or "")
         if not folder:
             return
         self.image_folder = folder
@@ -1120,7 +1122,8 @@ class FileIOMixin:
         if not self._confirm_replace_detections():
             return
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "CSVファイルを選択", filter="CSV Files (*.csv);;All Files (*)"
+            self, "CSVファイルを選択", self.last_txt_import_folder or self.image_folder or "",
+            filter="CSV Files (*.csv);;All Files (*)"
         )
         if not path:
             return
@@ -1178,7 +1181,7 @@ class FileIOMixin:
         if not self._confirm_replace_detections():
             return
         directory = QtWidgets.QFileDialog.getExistingDirectory(
-            self, "LabelMe JSONフォルダを選択"
+            self, "LabelMe JSONフォルダを選択", self.last_txt_import_folder or self.image_folder or ""
         )
         if not directory:
             return
@@ -1262,8 +1265,9 @@ class FileIOMixin:
         if not self.detections:
             QtWidgets.QMessageBox.warning(self, "データなし", "保存できる検出データがありません。")
             return
+        default_path = os.path.join(self.last_txt_import_folder or self.image_folder or "", "detections.csv")
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "CSVで保存", filter="CSV Files (*.csv)"
+            self, "CSVで保存", default_path, filter="CSV Files (*.csv)"
         )
         if not path:
             return
@@ -1294,6 +1298,7 @@ class FileIOMixin:
             return
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self, "DeepOCSORT形式ファイルを選択 (frame,id,x,y,w,h,conf,cls,vis)",
+            self.last_txt_import_folder or self.image_folder or "",
             filter="CSV/Text files (*.csv *.txt);;CSV files (*.csv);;Text files (*.txt);;All Files (*)"
         )
         if not path:
@@ -1402,7 +1407,9 @@ class FileIOMixin:
         if not self.detections:
             QtWidgets.QMessageBox.warning(self, "データなし", "保存できる検出データがありません。")
             return
-        directory = QtWidgets.QFileDialog.getExistingDirectory(self, "LabelMe JSON保存先フォルダを選択")
+        directory = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "LabelMe JSON保存先フォルダを選択", self.last_txt_import_folder or self.image_folder or ""
+        )
         if not directory:
             return
         try:
@@ -1465,7 +1472,9 @@ class FileIOMixin:
         if not self.detections:
             QtWidgets.QMessageBox.warning(self, "データなし", "エクスポートできる検出データがありません。")
             return
-        base_dir = QtWidgets.QFileDialog.getExistingDirectory(self, "エクスポート先フォルダを選択")
+        base_dir = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "エクスポート先フォルダを選択", self.last_txt_import_folder or self.image_folder or ""
+        )
         if not base_dir:
             return
         import hashlib, time
