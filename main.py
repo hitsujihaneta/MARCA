@@ -74,6 +74,46 @@ class DetectionEditor(UIBuilderMixin, FileIOMixin, CoreLogicMixin, QtWidgets.QWi
         self.store.hidden_ids = val
 
     @property
+    def pixmap_cache(self) -> Dict[str, QtGui.QPixmap]:
+        return self.store.pixmap_cache
+
+    @pixmap_cache.setter
+    def pixmap_cache(self, val: Dict[str, QtGui.QPixmap]):
+        self.store.pixmap_cache = val
+
+    @property
+    def max_cache_size(self) -> int:
+        return self.store.pixmap_cache_max
+
+    @max_cache_size.setter
+    def max_cache_size(self, val: int):
+        self.store.pixmap_cache_max = val
+
+    @property
+    def play_scaled_cache(self) -> Dict[str, Tuple[QtGui.QPixmap, QtCore.QSize]]:
+        return self.store.play_scaled_cache
+
+    @play_scaled_cache.setter
+    def play_scaled_cache(self, val: Dict[str, Tuple[QtGui.QPixmap, QtCore.QSize]]):
+        self.store.play_scaled_cache = val
+
+    @property
+    def play_scaled_cache_max(self) -> int:
+        return self.store.play_scaled_cache_max
+
+    @play_scaled_cache_max.setter
+    def play_scaled_cache_max(self, val: int):
+        self.store.play_scaled_cache_max = val
+
+    @property
+    def play_target_width(self) -> int:
+        return self.store.play_target_width
+
+    @play_target_width.setter
+    def play_target_width(self, val: int):
+        self.store.play_target_width = val
+
+    @property
     def playback_speed(self) -> float:
         return self.store.playback_speed
 
@@ -141,8 +181,7 @@ class DetectionEditor(UIBuilderMixin, FileIOMixin, CoreLogicMixin, QtWidgets.QWi
         self.image_paths: List[Tuple[str, FrameNumber]] = []  # list of (path, frame_number)
         self.detections: Dict[FrameNumber, List[Box]] = {}
         self.loaded_frames: set = set()  # 読み込み済みフレームを記録
-        self.pixmap_cache: Dict[str, QtGui.QPixmap] = {}  # 画像キャッシュ（再生高速化用）
-        self.max_cache_size: int = 100  # 最大キャッシュサイズ
+        # pixmap_cache / max_cache_size は store 側で保持し、追跡フェーズと共有する（プロパティ経由）
         self.current_frame_index: int = 0
         self.current_id: str = ""
         self.mode: str = "select"  # "select" | "edit"
@@ -180,7 +219,9 @@ class DetectionEditor(UIBuilderMixin, FileIOMixin, CoreLogicMixin, QtWidgets.QWi
         self.playback_speed: float = 2.0  # 再生速度倍率（デフォルト2倍速）
         self._bbox_items: list = []       # 再生中のBBoxアイテム管理リスト
         self._play_pixmap_item = None     # 再生中のPixmapアイテムキャッシュ
-        
+        # play_scaled_cache / play_scaled_cache_max / play_target_width は
+        # store 側で保持し、追跡フェーズと共有する（プロパティ経由）
+
         # 進捗表示更新の遅延タイマー（操作中は更新を遅延）
         self.progress_update_timer = QtCore.QTimer()
         self.progress_update_timer.setSingleShot(True)

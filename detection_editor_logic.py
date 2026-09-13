@@ -143,35 +143,56 @@ class CoreLogicMixin:
             self.toggle_play_pause()
 
 
+    def _get_play_pixmap(self, img_path: str):
+        """再生用に、FHD相当まで縮小デコードしたQPixmapを返す。
+        戻り値は (縮小pixmap, 原寸サイズ)。BBoxはすべて原寸座標系なので、
+        原寸サイズをシーン矩形・拡大率の計算に使う。
+        フル解像度のまま毎フレーム同期デコードすると（特に数千px級の画像で）
+        再生がカクつくため、表示に足りる解像度だけをデコードして負荷を下げる。"""
+        cached = self.play_scaled_cache.get(img_path)
+        if cached is not None:
+            return cached
+
+        reader = QtGui.QImageReader(img_path)
+        reader.setAutoTransform(True)
+        orig_size = reader.size()  # ヘッダーのみ参照（フルデコードなし）
+
+        target_w = self.play_target_width
+        if orig_size.isValid() and target_w and 0 < target_w < orig_size.width():
+            scale = target_w / orig_size.width()
+            reader.setScaledSize(QtCore.QSize(target_w, max(1, round(orig_size.height() * scale))))
+
+        image = reader.read()
+        if not image.isNull():
+            pixmap = QtGui.QPixmap.fromImage(image)
+        else:
+            pixmap = QtGui.QPixmap(img_path)  # 縮小デコード失敗時は通常読み込みにフォールバック
+        if pixmap.isNull():
+            return None, None
+        if not orig_size.isValid():
+            orig_size = pixmap.size()
+
+        if len(self.play_scaled_cache) >= self.play_scaled_cache_max:
+            first_key = next(iter(self.play_scaled_cache))
+            del self.play_scaled_cache[first_key]
+        self.play_scaled_cache[img_path] = (pixmap, orig_size)
+        return pixmap, orig_size
+
     def _load_image_fast(self):
-        """再生時の高速画像読み込み（進捗表示更新なし、キャッシュ使用、テキストなし）"""
+        """再生時の高速画像読み込み（進捗表示更新なし、縮小デコードでテキストなし）"""
         if not self.image_paths:
             return
         
         img_path, frame_number = self.image_paths[self.current_frame_index]
         self._load_frame_if_needed(frame_number)
 
-        # キャッシュから画像を取得、なければ読み込んでキャッシュに保存
-        if img_path in self.pixmap_cache:
-            pixmap = self.pixmap_cache[img_path]
-        else:
-            pixmap = QtGui.QPixmap(img_path)
-            if pixmap.isNull():
-                return
-            # キャッシュサイズ制限
-            if len(self.pixmap_cache) >= self.max_cache_size:
-                # 古いキャッシュを削除（最初の要素）
-                first_key = next(iter(self.pixmap_cache))
-                del self.pixmap_cache[first_key]
-            self.pixmap_cache[img_path] = pixmap
+        pixmap, orig_size = self._get_play_pixmap(img_path)
+        if pixmap is None:
+            return
 
         # hover_item を先にシーンから除去してから参照を破棄
         if self.hover_item is not None and self.hover_item.scene() == self.scene:
             self.scene.removeItem(self.hover_item)
-        # 管理リストから直接削除（scene.items()スキャン不要）
-        for item in self._bbox_items:
-            self.scene.removeItem(item)
-        self._bbox_items.clear()
 
         self.hover_item = None
         self.hover_box_index = None
@@ -182,7 +203,11 @@ class CoreLogicMixin:
             self._play_pixmap_item.setPixmap(pixmap)
         else:
             self._play_pixmap_item = self.scene.addPixmap(pixmap)
-            self.scene.setSceneRect(0, 0, pixmap.width(), pixmap.height())
+            self.scene.setSceneRect(0, 0, orig_size.width(), orig_size.height())
+        # 縮小デコードした画像を原寸相当に引き伸ばす（BBox座標系は原寸のまま保つため）
+        self._play_pixmap_item.setScale(
+            orig_size.width() / pixmap.width() if pixmap.width() > 0 else 1.0
+        )
 
         # 既存の検出ボックスを描画（テキストなし - 高速化のため）
         frame_boxes = self.detections.get(frame_number, [])
@@ -193,15 +218,25 @@ class CoreLogicMixin:
                 filter_id = self.filter_combo.currentText()
                 frame_boxes = [box for box in frame_boxes if box[4] == filter_id]
 
+        # 矩形アイテムは毎フレーム作り直さず使い回す（QGraphicsItemの生成/破棄コストを削減）。
+        # プールが足りない分だけ新規追加し、余った分は削除せず非表示にして次フレームに備える。
+        pool = self._bbox_items
         for i, (x, y, w, h, label) in enumerate(frame_boxes):
             is_hidden = label in self.hidden_ids
             color = self.color_for(label)
             pen = QtGui.QPen(color, 2)
-            box_item = self.scene.addRect(x, y, w, h, pen)
-            if is_hidden:
-                box_item.setOpacity(0.4)
+            if i < len(pool):
+                box_item = pool[i]
+                box_item.setRect(x, y, w, h)
+                box_item.setPen(pen)
+                box_item.setVisible(True)
+            else:
+                box_item = self.scene.addRect(x, y, w, h, pen)
+                pool.append(box_item)
+            box_item.setOpacity(0.4 if is_hidden else 1.0)
             box_item.setData(0, i)
-            self._bbox_items.append(box_item)  # 管理リストに追加
+        for j in range(len(frame_boxes), len(pool)):
+            pool[j].setVisible(False)
 
         # フレーム情報を更新（軽量）
         if hasattr(self, 'frame_index_label'):
@@ -234,6 +269,7 @@ class CoreLogicMixin:
             self.play_timer.stop()
             self._bbox_items = []        # 再生停止：管理リストを破棄（以後は通常描画に戻る）
             self._play_pixmap_item = None
+            self.load_image()            # 停止後は原寸・ラベル付きの通常描画に戻す
             print(f"[再生停止]")
     
     def _on_speed_changed(self, text: str):

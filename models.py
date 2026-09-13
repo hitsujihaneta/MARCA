@@ -2,8 +2,8 @@ import re
 import hashlib
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
+from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtGui import QColor, QPixmap
 
 
 _PHASE3_AVAILABLE = True
@@ -147,3 +147,13 @@ class EditorStore:
         self.id_color_map: Dict[str, int] = {}  # ID→パレット色番号（検出・追跡フェーズで共有し、同じIDは同じ色にする）
         self.hidden_ids: set = set()  # 非表示にするIDのセット（検出・追跡フェーズで共有）
         self.playback_speed: float = 2.0  # 再生速度倍率（検出・追跡フェーズで共有）
+        # 画像キャッシュ（検出・追跡フェーズで共有。以前は各フェーズが別々に
+        # 同じ画像を保持しており、フェーズ切り替え時に二重にメモリを消費していた）
+        self.pixmap_cache: Dict[str, QPixmap] = {}
+        self.pixmap_cache_max: int = 100  # 共有キャッシュの上限枚数
+        # 再生時専用の縮小デコードキャッシュ（検出・追跡フェーズで共有）。
+        # 原寸が数千px級だと毎フレーム同期デコードが重くカクつきの原因になるため、
+        # 再生中はplay_target_width幅までデコードし、表示側でBBox座標系(原寸)に合わせて拡大する。
+        self.play_scaled_cache: Dict[str, Tuple[QPixmap, QSize]] = {}
+        self.play_scaled_cache_max: int = 150
+        self.play_target_width: int = 3200

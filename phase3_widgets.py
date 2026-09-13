@@ -21,7 +21,7 @@ from models import (Box, Lane, Span, EditorStore, _PALETTE, color_index_for_id,
 # GraphicsImageView（コードAから移植、最小変更）
 # =====================================================================
 class P3ImageView(QGraphicsView):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, store=None):
         super().__init__(parent)
         self.setScene(QGraphicsScene(self))
         self.setMouseTracking(True)
@@ -51,8 +51,21 @@ class P3ImageView(QGraphicsView):
         self._initial_fit_done = False
         self._min_zoom_scale = 0.0
         self._playing = False  # 再生中フラグ（True時はラベル非表示）
-        self._pixmap_cache: Dict[str, QPixmap] = {}  # パスをキーにしたPixmapキャッシュ
-        self._max_cache_size = 30  # キャッシュ上限（枚数）
+        # 検出フェーズと同じ画像キャッシュを共有する（storeが渡された場合）。
+        # 以前はフェーズごとに別々のキャッシュを持ち、同じ画像を二重に保持していた
+        if store is not None:
+            self._pixmap_cache: Dict[str, QPixmap] = store.pixmap_cache
+            self._max_cache_size = store.pixmap_cache_max
+            # 再生時専用の縮小デコードキャッシュも検出フェーズと共有する
+            self._play_scaled_cache: Dict[str, Tuple[QPixmap, QtCore.QSize]] = store.play_scaled_cache
+            self._play_scaled_cache_max = store.play_scaled_cache_max
+            self._play_target_width = store.play_target_width
+        else:
+            self._pixmap_cache: Dict[str, QPixmap] = {}
+            self._max_cache_size = 30
+            self._play_scaled_cache: Dict[str, Tuple[QPixmap, QtCore.QSize]] = {}
+            self._play_scaled_cache_max = 30
+            self._play_target_width = 1920
         self.setMinimumSize(400, 150)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.grabGesture(Qt.PinchGesture)
@@ -75,30 +88,75 @@ class P3ImageView(QGraphicsView):
         self.current_frame = f
         self._show_frame(f)
 
+    def _get_play_pixmap(self, path: str):
+        """再生用に、検出フェーズと共有のtarget幅まで縮小デコードしたQPixmapを返す。
+        戻り値は (縮小pixmap, 原寸サイズ)。BBoxは原寸座標系なので、シーン矩形・
+        拡大率の計算には原寸サイズを使う。"""
+        cached = self._play_scaled_cache.get(path)
+        if cached is not None:
+            return cached
+
+        reader = QtGui.QImageReader(path)
+        reader.setAutoTransform(True)
+        orig_size = reader.size()  # ヘッダーのみ参照（フルデコードなし）
+
+        target_w = self._play_target_width
+        if orig_size.isValid() and target_w and 0 < target_w < orig_size.width():
+            scale = target_w / orig_size.width()
+            reader.setScaledSize(QtCore.QSize(target_w, max(1, round(orig_size.height() * scale))))
+
+        image = reader.read()
+        if not image.isNull():
+            px = QPixmap.fromImage(image)
+        else:
+            px = QPixmap(path)  # 縮小デコード失敗時は通常読み込みにフォールバック
+        if px.isNull():
+            return None, None
+        if not orig_size.isValid():
+            orig_size = px.size()
+
+        if len(self._play_scaled_cache) >= self._play_scaled_cache_max:
+            first_key = next(iter(self._play_scaled_cache))
+            del self._play_scaled_cache[first_key]
+        self._play_scaled_cache[path] = (px, orig_size)
+        return px, orig_size
+
     def _show_frame(self, index: int):
         if not self.images or not (0 <= index < len(self.images)):
             return
         path = self.images[index]
 
-        # キャッシュから取得、なければディスクから読んでキャッシュに保存
-        if path in self._pixmap_cache:
-            px = self._pixmap_cache[path]
-        else:
-            px = QPixmap(path)
-            if px.isNull():
+        if self._playing:
+            # 再生中は縮小デコードでCPU負荷を下げる（原寸が数千px級だとカクつきの原因になるため）
+            px, orig_size = self._get_play_pixmap(path)
+            if px is None:
                 return
-            if len(self._pixmap_cache) >= self._max_cache_size:
-                first_key = next(iter(self._pixmap_cache))
-                del self._pixmap_cache[first_key]
-            self._pixmap_cache[path] = px
+        else:
+            # 停止中・スクラブ中は原寸で表示する
+            if path in self._pixmap_cache:
+                px = self._pixmap_cache[path]
+            else:
+                px = QPixmap(path)
+                if px.isNull():
+                    return
+                if len(self._pixmap_cache) >= self._max_cache_size:
+                    first_key = next(iter(self._pixmap_cache))
+                    del self._pixmap_cache[first_key]
+                self._pixmap_cache[path] = px
+            orig_size = px.size()
 
         sc = self.scene()
         if self._pixmap_item is None:
             sc.clear()
+            # scene.clear()で全アイテムが削除されるため、プール参照もリセットしておく
+            self._box_items = []
+            self._label_items = []
             self._pixmap_item = sc.addPixmap(px)
-            sc.setSceneRect(QRectF(px.rect()))
+            sc.setSceneRect(QRectF(0, 0, orig_size.width(), orig_size.height()))
         else:
             self._pixmap_item.setPixmap(px)
+        # 縮小デコードした画像を原寸相当に引き伸ばす（BBox座標系は原寸のまま保つため）
+        self._pixmap_item.setScale(orig_size.width() / px.width() if px.width() > 0 else 1.0)
         self._render_boxes()
         if not self._initial_fit_done:
             self.fitInView(sc.sceneRect(), Qt.KeepAspectRatio)
@@ -107,33 +165,48 @@ class P3ImageView(QGraphicsView):
 
     def _render_boxes(self):
         sc = self.scene()
-        for it in self._box_items + self._label_items:
-            sc.removeItem(it)
-        self._box_items.clear()
-        self._label_items.clear()
 
         # ── 直接参照モード（store.detections + 元フレーム番号）────────────────
         # 検出フェーズと同じ座標系・フレーム対応を保証する
         if self._det_store is not None and self._orig_frames:
+            # ラベルは再生中は描画しない仕様のため、毎回作り直しても軽い
+            for it in self._label_items:
+                sc.removeItem(it)
+            self._label_items.clear()
+
+            raw_boxes = []
             if 0 <= self.current_frame < len(self._orig_frames):
                 orig_frame = self._orig_frames[self.current_frame]
-                raw_boxes = self._det_store.get(orig_frame, [])
-                for item in raw_boxes:
-                    if len(item) < 5:
-                        continue
-                    x, y, w, h, label = item[0], item[1], item[2], item[3], str(item[4])
-                    is_hidden = label in self.hidden_ids
-                    color = self._label_colors.get(label, QColor("white"))
-                    pen = QPen(color, 2)
+                raw_boxes = [it for it in self._det_store.get(orig_frame, []) if len(it) >= 5]
+
+            # 矩形アイテムは毎フレーム作り直さず使い回す（QGraphicsItemの生成/破棄コストを削減）。
+            # プールが足りない分だけ新規追加し、余った分は削除せず非表示にして次フレームに備える。
+            pool = self._box_items
+            for i, item in enumerate(raw_boxes):
+                x, y, w, h, label = item[0], item[1], item[2], item[3], str(item[4])
+                is_hidden = label in self.hidden_ids
+                color = self._label_colors.get(label, QColor("white"))
+                pen = QPen(color, 2)
+                if i < len(pool):
+                    ri = pool[i]
+                    ri.setRect(float(x), float(y), float(w), float(h))
+                    ri.setPen(pen)
+                    ri.setVisible(True)
+                else:
                     ri = sc.addRect(float(x), float(y), float(w), float(h), pen)
-                    if is_hidden:
-                        ri.setOpacity(0.4)
-                    self._box_items.append(ri)
-                    if not self._playing and not is_hidden:  # 再生中・非表示IDはラベル描画をスキップ
-                        self._draw_id_tag(sc, float(x), float(y), label, color)
+                    pool.append(ri)
+                ri.setOpacity(0.4 if is_hidden else 1.0)
+                if not self._playing and not is_hidden:  # 再生中・非表示IDはラベル描画をスキップ
+                    self._draw_id_tag(sc, float(x), float(y), label, color)
+            for j in range(len(raw_boxes), len(pool)):
+                pool[j].setVisible(False)
             return
 
         # ── フォールバック（従来の boxes_by_frame 方式）──────────────────────
+        for it in self._box_items + self._label_items:
+            sc.removeItem(it)
+        self._box_items.clear()
+        self._label_items.clear()
         boxes = self.boxes_by_frame.get(self.current_frame, [])
         for bx in boxes:
             label = self.lane_labels.get(bx.lane_index, str(bx.lane_index))
@@ -898,7 +971,7 @@ class Phase3Widget(QWidget):
         vbox.setContentsMargins(0, 0, 0, 0)
         vbox.setSpacing(0)
 
-        self.mainView = P3ImageView(self)
+        self.mainView = P3ImageView(self, store=self.store)
         self.ctrl     = P3ControlPanel(self)
         self.timeline = P3Timeline(self.total_frames, self.fps, self.lanes, parent=self)
         # 検出フェーズと同じhidden_idsセットを共有参照する（コピーではなく同じオブジェクト）
@@ -1245,8 +1318,8 @@ class Phase3Widget(QWidget):
             self.timer.stop()
             self.ctrl.btnPlay.setText("▶")
             self.mainView._playing = False
-            # 停止後にラベルを再描画
-            self.mainView._render_boxes()
+            # 停止後は原寸・ラベル付きの通常描画に戻す
+            self.mainView._show_frame(self.current_frame)
             self.timeline.update_playhead(self.current_frame)
         else:
             self.mainView._playing = True

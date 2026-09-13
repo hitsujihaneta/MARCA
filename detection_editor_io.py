@@ -499,6 +499,21 @@ class FileIOMixin:
         self.loaded_frames.clear()
         self.id_list.clear()
 
+    def _reset_session_state_for_new_folder(self):
+        """新しい画像フォルダを読み込む前に、前のプロジェクトの状態を完全にクリアする。
+        load_images() 専用（フォルダ切り替え＝別プロジェクトへの移行とみなせるため）。
+        追跡フェーズと共有しているコレクション（pixmap_cache/id_color_map/hidden_ids）は
+        再代入すると参照が食い違うため、必ず .clear() で中身だけ入れ替える。"""
+        self.pixmap_cache.clear()
+        self.play_scaled_cache.clear()
+        self.undo_stack.clear()
+        self.id_list.clear()
+        self.id_intervals.clear()
+        self.id_color_map.clear()
+        self.hidden_ids.clear()
+        if hasattr(self, 'phase3_widget'):
+            self.phase3_widget._clear_undo()
+
     def _apply_tmp_detections(self, tmp: Dict[int, list]) -> int:
         """tmpのデータをself.detectionsに転送し、IDリストを更新する。インポート数を返す。"""
         imported = 0
@@ -865,6 +880,9 @@ class FileIOMixin:
             progress.close()
             QtWidgets.QMessageBox.warning(self, "警告", "指定フォルダに画像ファイルが見つかりませんでした。")
             return
+
+        # 別プロジェクトへの切り替えとみなし、前フォルダのキャッシュ/Undo履歴/ID一覧を破棄する
+        self._reset_session_state_for_new_folder()
 
         # UI部品の初期化（load_images実行時に loaded_ui がまだ構築されていない可能性があるため）
         if hasattr(self, 'image_count_label'):
