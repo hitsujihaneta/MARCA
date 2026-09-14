@@ -452,6 +452,15 @@ class CoreLogicMixin:
         """Phase1 パネルからチェック実行"""
         if hasattr(self, 'phase2_count_spin') and hasattr(self, 'lc_count_spin'):
             self.phase2_count_spin.setValue(self.lc_count_spin.value())
+        self._refresh_label_check_table()
+
+    def _refresh_label_check_table(self):
+        """全フレームのラベル数チェックをやり直し、lc_table/サマリーを最新化する。
+        IDの一括削除など、複数フレームに影響する操作の後に呼ぶ
+        （_update_label_check_indicatorは現在フレームしか見ないため、
+        他フレームの行が古いまま残ってしまう）。"""
+        if not hasattr(self, 'phase2_count_spin'):
+            return
         self.run_phase2_check()
         self._sync_lc_table()
         if hasattr(self, 'lc_summary_label') and hasattr(self, 'phase2_summary_label'):
@@ -1175,6 +1184,11 @@ class CoreLogicMixin:
 
         self.load_image()
         self.rebuild_id_list_ui()
+
+        # ラベルチェック中は削除の影響が全フレームに及ぶため一覧を作り直す
+        # （load_image()内のインジケーター更新は現在フレームしか見ていない）
+        if getattr(self, 'label_check_mode', False):
+            self._refresh_label_check_table()
 
     # -------- 画像表示 --------
     def load_image(self):
