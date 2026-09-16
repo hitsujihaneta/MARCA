@@ -2089,11 +2089,16 @@ class CoreLogicMixin:
         更新チェックや画像読み込み確認は行わない。
         それ以外の場合、前回が予期せぬエラーで終了していないか確認し、
         あればバックアップの場所を通知したうえで復元する。"""
-        if self._restore_after_restart():
+        restored = self._restore_after_restart()
+        print(f"[UPDATE_CHECK] _restore_after_restart -> {restored}")
+        if restored:
             return
-        if self._check_crash_backup_on_startup():
+        crash_handled = self._check_crash_backup_on_startup()
+        print(f"[UPDATE_CHECK] _check_crash_backup_on_startup -> {crash_handled}")
+        if crash_handled:
             return
         restarting = self.check_for_updates(silent=True)
+        print(f"[UPDATE_CHECK] check_for_updates -> {restarting}")
         if not restarting:
             self._prompt_initial_image_load()
 
@@ -2197,8 +2202,10 @@ class CoreLogicMixin:
     def _check_for_updates_impl(self, silent: bool) -> bool:
         """戻り値: 更新を適用してアプリの再起動処理に入ればTrue、それ以外はFalse。"""
         root = self._repo_root()
+        print(f"[UPDATE_CHECK] root={root!r} silent={silent}")
 
         rc, out, err = self._run_git("rev-parse", "--is-inside-work-tree", cwd=root)
+        print(f"[UPDATE_CHECK] is-inside-work-tree rc={rc} out={out!r} err={err!r}")
         if rc != 0:
             if silent:
                 # 「最新版」「未コミット変更あり」等は自動チェックでは無音のままにするが、
@@ -2220,6 +2227,7 @@ class CoreLogicMixin:
 
         # 自動チェック時はネットワークが遅い/繋がらない場合に起動が止まらないよう短めのタイムアウトにする
         rc, _, err = self._run_git("fetch", "origin", "main", cwd=root, timeout=6 if silent else 30)
+        print(f"[UPDATE_CHECK] fetch rc={rc} err={err!r}")
         if rc != 0:
             if silent:
                 QtWidgets.QMessageBox.warning(
@@ -2232,18 +2240,21 @@ class CoreLogicMixin:
 
         rc1, local_hash, _ = self._run_git("rev-parse", "HEAD", cwd=root)
         rc2, remote_hash, _ = self._run_git("rev-parse", "origin/main", cwd=root)
+        print(f"[UPDATE_CHECK] local={local_hash!r} rc1={rc1} remote={remote_hash!r} rc2={rc2}")
         if rc1 != 0 or rc2 != 0:
             if not silent:
                 QtWidgets.QMessageBox.warning(self, "更新確認", "コミット情報の取得に失敗しました。")
             return False
 
         if local_hash == remote_hash:
+            print("[UPDATE_CHECK] local == remote, up to date")
             if not silent:
                 QtWidgets.QMessageBox.information(self, "更新確認", "最新版です。")
             return False
 
         _, log, _ = self._run_git("log", "--oneline", f"{local_hash}..{remote_hash}", cwd=root)
         n_commits = len(log.splitlines()) if log else 0
+        print(f"[UPDATE_CHECK] n_commits={n_commits}")
 
         # 未コミットの変更があると更新で壊れる可能性があるため、pull前にチェックする。
         # 未追跡ファイル（??）は git pull --ff-only を妨げないので対象外にする
@@ -2252,6 +2263,7 @@ class CoreLogicMixin:
         dirty = "\n".join(
             line for line in status_out.splitlines() if not line.startswith("??")
         )
+        print(f"[UPDATE_CHECK] dirty={dirty!r}")
         if dirty:
             if not silent:
                 QtWidgets.QMessageBox.warning(
@@ -2264,6 +2276,7 @@ class CoreLogicMixin:
 
         # ここまで来たら「適用可能な更新がある」ので、silentでも確認ダイアログは出す
         # （右=更新する・左=更新しない で統一。QMessageBox標準Yes/NoはOSごとに左右が入れ替わるため使わない）
+        print("[UPDATE_CHECK] reaching confirm dialog")
         if not self._ask_confirm(
             "更新の確認",
             f"新しいバージョンがあります（{n_commits}件の更新）:\n\n{log}\n\n"
