@@ -432,4 +432,13 @@ if __name__ == '__main__':
     _signal_wakeup_timer.timeout.connect(lambda: None)
     _signal_wakeup_timer.start(500)
 
-    app.exec_()
+    exit_code = app.exec_()
+
+    # 終了時、PyQt5(sip)がQtイベントループ終了後のPythonインタプリタ終了処理
+    # (Py_FinalizeEx内のオブジェクト後片付け)で、既に解放済みのC++オブジェクトを
+    # 参照してクラッシュすることがある（特にmacOSの新しいポインタ認証環境で顕在化）。
+    # イベントループは正常に終わっているので、Python側の後片付けをスキップして
+    # そのままプロセスを終了させることでこのクラッシュを回避する。
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(exit_code)

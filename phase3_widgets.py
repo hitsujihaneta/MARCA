@@ -524,7 +524,11 @@ class P3Timeline(QGraphicsView):
             painter.fillRect(QRectF(self.margin_left, y, self.sceneRect().width() - self.margin_left, self.row_height), bg)
             painter.setPen(QPen(QColor(60, 65, 72), 0.5))
             painter.drawLine(QLineF(self.margin_left, y + self.row_height, self.sceneRect().width(), y + self.row_height))
-            # スパン描画（常にlane.colorで描画）
+            # スパン描画（IDが非表示（トグルOFF）の場合は、行ヘッダーのトグルつまみと
+            # 同じ半透明（alpha 102）で描画し、非表示状態であることを分かりやすくする）
+            span_color = QColor(lane.color)
+            if lane.id_value in self.hidden_ids:
+                span_color.setAlpha(102)
             for sp in lane.spans:
                 sf = max(sp.start, start_frame)
                 ef = min(sp.end,   end_frame)
@@ -533,8 +537,8 @@ class P3Timeline(QGraphicsView):
                 x2 = self.frame_to_x(ef)
                 w  = max(3.0, x2 - x1)
                 r  = QRectF(x1, y + 2, w, self.row_height - 4)
-                painter.fillRect(r, lane.color)
-                painter.setPen(QPen(lane.color.darker(130), 1))
+                painter.fillRect(r, span_color)
+                painter.setPen(QPen(span_color.darker(130), 1))
                 painter.drawRect(r)
 
             # オクルージョン: 黒ボーダー矩形をスパン上に重ねて表示
